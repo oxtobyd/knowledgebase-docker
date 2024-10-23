@@ -1,14 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Search, Plus, Upload, Save, LogOut } from "lucide-react"
+import React, { useCallback, useEffect, useState } from "react"
+import { Plus, Upload, Save, LogOut } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { initializeApp } from "firebase/app"
-import { getFirestore, collection, addDoc, getDocs, query, where } from "firebase/firestore"
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore"
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth"
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { useToast } from "@/components/ui/use-toast"
@@ -32,14 +32,53 @@ const storage = getStorage(app)
 
 const categories = ["Guides", "Support", "Tutorials", "FAQs"]
 
+interface Article {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  fileUrl?: string;
+  createdAt: Date;
+  createdBy: string;
+}
+
 export default function KnowledgeBase() {
-  const [articles, setArticles] = useState([])
+  const [articles, setArticles] = useState<Article[]>([])
   const [searchTerm, setSearchTerm] = useState("")
-  const [newArticle, setNewArticle] = useState({ title: "", content: "", category: "", file: null })
+  const [newArticle, setNewArticle] = useState<{ title: string; content: string; category: string; file: File | null }>({ title: "", content: "", category: "", file: null })
   const [isAddingNew, setIsAddingNew] = useState(false)
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const { toast } = useToast()
+
+  const fetchArticles = useCallback(async () => {
+    setLoading(true)
+    try {
+      const querySnapshot = await getDocs(collection(db, "articles"))
+      const fetchedArticles = querySnapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          title: data.title,
+          content: data.content,
+          category: data.category,
+          fileUrl: data.fileUrl,
+          createdAt: data.createdAt.toDate(),
+          createdBy: data.createdBy,
+        } as Article;
+      });
+      setArticles(fetchedArticles)
+    } catch (error) {
+      console.error("Failed to fetch articles:", error)
+      toast({
+        title: "Error",
+        description: "Failed to fetch articles. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
@@ -53,26 +92,9 @@ export default function KnowledgeBase() {
     })
 
     return () => unsubscribe()
-  }, [])
+  }, [fetchArticles])
 
-  const fetchArticles = async () => {
-    setLoading(true)
-    try {
-      const querySnapshot = await getDocs(collection(db, "articles"))
-      const fetchedArticles = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-      setArticles(fetchedArticles)
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to fetch articles. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSearch = (e) => {
+  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value)
   }
 
@@ -112,6 +134,7 @@ export default function KnowledgeBase() {
       setIsAddingNew(false)
       fetchArticles()
     } catch (error) {
+      console.error("Failed to save article:", error)
       toast({
         title: "Error",
         description: "Failed to save article. Please try again.",
@@ -122,8 +145,10 @@ export default function KnowledgeBase() {
     }
   }
 
-  const handleFileChange = (e) => {
-    setNewArticle({ ...newArticle, file: e.target.files[0] })
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setNewArticle({ ...newArticle, file: e.target.files[0] })
+    }
   }
 
   const handleSignIn = async () => {
@@ -131,6 +156,7 @@ export default function KnowledgeBase() {
       const provider = new GoogleAuthProvider()
       await signInWithPopup(auth, provider)
     } catch (error) {
+      console.error("Failed to sign in:", error)
       toast({
         title: "Error",
         description: "Failed to sign in. Please try again.",
@@ -143,11 +169,35 @@ export default function KnowledgeBase() {
     try {
       await signOut(auth)
     } catch (error) {
+      console.error("Failed to sign out:", error)
       toast({
         title: "Error",
         description: "Failed to sign out. Please try again.",
         variant: "destructive",
       })
+    }
+  }
+
+  const handleDelete = async (articleId: string) => {
+    if (window.confirm("Are you sure you want to delete this article?")) {
+      setLoading(true)
+      try {
+        await deleteDoc(doc(db, "articles", articleId))
+        toast({
+          title: "Success",
+          description: "Article deleted successfully!",
+        })
+        fetchArticles()
+      } catch (error) {
+        console.error("Failed to delete article:", error)
+        toast({
+          title: "Error",
+          description: "Failed to delete article. Please try again.",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -229,8 +279,15 @@ export default function KnowledgeBase() {
             {filteredArticles.map((article) => (
               <Card key={article.id}>
                 <CardHeader>
-                  <CardTitle>{article.title}</CardTitle>
-                  <CardDescription>{article.category}</CardDescription>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle>{article.title}</CardTitle>
+                      <CardDescription>{article.category}</CardDescription>
+                    </div>
+                    <Button variant="destructive" onClick={() => handleDelete(article.id)}>
+                      Delete
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <p>{article.content}</p>
