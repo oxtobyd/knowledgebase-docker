@@ -1,0 +1,126 @@
+.react-tags__tags {
+  position: relative;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 5px;
+  background: #fff;
+}
+
+.react-tags__selected {
+  display: inline;
+}
+
+.react-tags__tag {
+  background: #edf2f7;
+  border-radius: 2px;
+  border: 1px solid #cbd5e0;
+  color: #4a5568;
+  display: inline-block;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  margin: 0 5px 5px 0;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.react-tags__tag:hover {
+  background: #e2e8f0;
+}
+
+.react-tags__remove {
+  cursor: pointer;
+  color: #aaa;
+  margin-left: 8px;
+  padding: 0 4px;
+}
+
+.react-tags__remove:hover {
+  color: #000;
+}
+
+.react-tags__tagInput {
+  display: inline-block;
+  width: 100%;
+  max-width: 300px;
+}
+
+.react-tags__tagInputField {
+  background: #fff;
+  border: 1px solid #cbd5e0;
+  border-radius: 2px;
+  font-size: 0.9rem;
+  margin: 0;
+  padding: 5px;
+  width: 100%;
+  outline: none;
+}
+
+.react-tags__tagInputField:focus {
+  border-color: #4299e1;
+}
+
+.react-tags__suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+}
+
+.react-tags__suggestions ul {
+  margin: 4px -1px;
+  padding: 0;
+  list-style: none;
+  background: white;
+  border: 1px solid #D1D1D1;
+  border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.react-tags__suggestions li {
+  border-bottom: 1px solid #ddd;
+  padding: 6px 8px;
+}
+
+.react-tags__suggestions li mark {
+  text-decoration: underline;
+  background: none;
+  font-weight: 600;
+}
+
+.react-tags__suggestions li:hover {
+  cursor: pointer;
+  background: #eee;
+}
+
+.react-tags__suggestions li.is-active {
+  background: #b7cfe0;
+}
+
+.react-tags__suggestions li.is-disabled {
+  opacity: 0.5;
+  cursor: auto;
+}
+
+.react-tags__activeSuggestion {
+  background: #b7cfe0;
+}
+
+.react-tags__editTagInput {
+  display: inline-block;
+}
+
+.react-tags__editTagInputField {
+  font-size: inherit;
+  width: 100%;
+  border: none;
+  padding: 0;
+}
+
+.react-tags__clearAll {
+  cursor: pointer;
+  padding: 10px;
+  margin: 0 0 0 5px;
+  background: none;
+  border: none;
+  line-height: 1;
+}

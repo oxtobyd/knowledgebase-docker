@@ -1,18 +1,24 @@
 "use client"
 
 import React, { useCallback, useEffect, useState } from "react"
-import { Plus, Upload, Save, LogOut } from "lucide-react"
+import { Plus, Save, LogOut, Trash2, Search, Paperclip } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { initializeApp } from "firebase/app"
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore"
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore"
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth"
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { useToast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
+import dynamic from 'next/dynamic'
+import 'react-quill/dist/quill.snow.css'
+import { WithContext as ReactTags } from 'react-tag-input';
+import { ArticleModal } from './ArticleModal'
+import { Navbar } from './Navbar'
+
 
 // Your Firebase configuration
 const firebaseConfig = {
@@ -30,26 +36,146 @@ const db = getFirestore(app)
 const auth = getAuth(app)
 const storage = getStorage(app)
 
-const categories = ["Guides", "Support", "Tutorials", "FAQs"]
+const categories = ["Portal", "MDS", "Candidates Panel", "Safeguarding", "DBS", "Stage 1", "Stage 2"]
 
-interface Article {
+export interface ArticleFile {
+  name: string;
+  url: string;
+  extractedText?: string;
+  thumbnailUrl?: string;
+}
+
+export interface Article {
   id: string;
   title: string;
   content: string;
   category: string;
-  fileUrl?: string;
+  files: ArticleFile[];
   createdAt: Date;
   createdBy: string;
+  extractedText?: string;
+  tags: string[];
+  newFiles?: File[];
+}
+
+async function extractTextFromFile(file: File): Promise<string> {
+  if (file.type === 'application/pdf') {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await import('pdfjs-dist');
+    const pdfjsLib = pdf.default;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    const doc = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    let extractedText = '';
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      extractedText += content.items.map((item) => {
+        if ('str' in item) {
+          return item.str;
+        }
+        return '';
+      }).join(' ') + '\n';
+    }
+    return extractedText;
+  } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    const arrayBuffer = await file.arrayBuffer();
+    const mammoth = await import('mammoth/mammoth.browser');
+    const result = await mammoth.extractRawText({arrayBuffer});
+    return result.value;
+  } else {
+    throw new Error('Unsupported file type');
+  }
+}
+
+const generateThumbnail = async (file: File): Promise<string> => {
+  if (file.type.startsWith('image/')) {
+    return URL.createObjectURL(file);
+  }
+
+  const fileExtension = file.name.split('.').pop()?.toLowerCase() || '';
+  const iconSvg = getFileIcon(fileExtension);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 100;
+  canvas.height = 100;
+  const ctx = canvas.getContext('2d');
+
+  if (ctx) {
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, 100, 100);
+
+    const img = new Image();
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(iconSvg)}`;
+
+    await new Promise((resolve) => {
+      img.onload = resolve;
+    });
+
+    ctx.drawImage(img, 25, 25, 50, 50);
+
+    ctx.fillStyle = '#000000';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(fileExtension.toUpperCase(), 50, 90);
+  }
+
+  return canvas.toDataURL();
+};
+
+const getFileIcon = (extension: string): string => {
+  const icons: Record<string, string> = {
+    pdf: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M181.9 256.1c-5-16-4.9-46.9-2-46.9 8.4 0 7.6 36.9 2 46.9zm-1.7 47.2c-7.7 20.2-17.3 43.3-28.4 62.7 18.3-7 39-17.2 62.9-21.9-12.7-9.6-24.9-23.4-34.5-40.8zM86.1 428.1c0 .8 13.2-5.4 34.9-40.2-6.7 6.3-29.1 24.5-34.9 40.2zM248 160h136v328c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V24C0 10.7 10.7 0 24 0h200v136c0 13.2 10.8 24 24 24zm-8 171.8c-20-12.2-33.3-29-42.7-53.8 4.5-18.5 11.6-46.6 6.2-64.2-4.7-29.4-42.4-26.5-47.8-6.8-5 18.3-.4 44.1 8.1 77-11.6 27.6-28.7 64.6-40.8 85.8-.1 0-.1.1-.2.1-27.1 13.9-73.6 44.5-54.5 68 5.6 6.9 16 10 21.5 10 17.9 0 35.7-18 61.1-61.8 25.8-8.5 54.1-19.1 79-23.2 21.7 11.8 47.1 19.5 64 19.5 29.2 0 31.2-32 19.7-43.4-13.9-13.6-54.3-9.7-73.6-7.2zM377 105L279 7c-4.5-4.5-10.6-7-17-7h-6v128h128v-6.1c0-6.3-2.5-12.4-7-16.9zm-74.1 255.3c4.1-2.7-2.5-11.9-42.8-9 37.1 15.8 42.8 9 42.8 9z"/></svg>',
+    doc: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24zm57.1 120H305c7.7 0 13.4 7.1 11.7 14.7l-38 168c-1.2 5.5-6.1 9.3-11.7 9.3h-38c-5.5 0-10.3-3.8-11.6-9.1-25.8-103.5-20.8-81.2-25.6-110.5h-.5c-1.1 14.3-2.4 17.4-25.6 110.5-1.3 5.3-6.1 9.1-11.6 9.1H117c-5.6 0-10.5-3.9-11.7-9.4l-37.8-168c-1.7-7.5 4-14.6 11.7-14.6h24.5c5.7 0 10.7 4 11.8 9.7 15.6 78 20.1 109.5 21 122.2 1.6-10.2 7.3-32.7 29.4-122.7 1.3-5.4 6.1-9.1 11.7-9.1h29.1c5.6 0 10.4 3.8 11.7 9.2 24 100.4 28.8 124 29.6 129.4-.2-11.2-2.6-17.8 21.6-129.2 1-5.6 5.9-9.5 11.5-9.5zM384 121.9v6.1H256V0h6.1c6.4 0 12.5 2.5 17 7l97.9 98c4.5 4.5 7 10.6 7 16.9z"/></svg>',
+    docx: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24zm57.1 120H305c7.7 0 13.4 7.1 11.7 14.7l-38 168c-1.2 5.5-6.1 9.3-11.7 9.3h-38c-5.5 0-10.3-3.8-11.6-9.1-25.8-103.5-20.8-81.2-25.6-110.5h-.5c-1.1 14.3-2.4 17.4-25.6 110.5-1.3 5.3-6.1 9.1-11.6 9.1H117c-5.6 0-10.5-3.9-11.7-9.4l-37.8-168c-1.7-7.5 4-14.6 11.7-14.6h24.5c5.7 0 10.7 4 11.8 9.7 15.6 78 20.1 109.5 21 122.2 1.6-10.2 7.3-32.7 29.4-122.7 1.3-5.4 6.1-9.1 11.7-9.1h29.1c5.6 0 10.4 3.8 11.7 9.2 24 100.4 28.8 124 29.6 129.4-.2-11.2-2.6-17.8 21.6-129.2 1-5.6 5.9-9.5 11.5-9.5zM384 121.9v6.1H256V0h6.1c6.4 0 12.5 2.5 17 7l97.9 98c4.5 4.5 7 10.6 7 16.9z"/></svg>',
+    xls: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24zm60.1 106.5L224 336l60.1 93.5c5.1 8-.6 18.5-10.1 18.5h-34.9c-4.4 0-8.5-2.4-10.6-6.3C208.9 405.5 192 373 192 373c-6.4 14.8-10 20-36.6 68.8-2.1 3.9-6.1 6.3-10.5 6.3H110c-9.5 0-15.2-10.5-10.1-18.5l60.3-93.5-60.3-93.5c-5.2-8 .6-18.5 10.1-18.5h34.8c4.4 0 8.5 2.4 10.6 6.3 26.1 48.8 20 33.6 36.6 68.5 0 0 6.1-11.7 36.6-68.5 2.1-3.9 6.2-6.3 10.6-6.3H274c9.5-.1 15.2 10.4 10.1 18.4zM384 121.9v6.1H256V0h6.1c6.4 0 12.5 2.5 17 7l97.9 98c4.5 4.5 7 10.6 7 16.9z"/></svg>',
+    xlsx: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24zm60.1 106.5L224 336l60.1 93.5c5.1 8-.6 18.5-10.1 18.5h-34.9c-4.4 0-8.5-2.4-10.6-6.3C208.9 405.5 192 373 192 373c-6.4 14.8-10 20-36.6 68.8-2.1 3.9-6.1 6.3-10.5 6.3H110c-9.5 0-15.2-10.5-10.1-18.5l60.3-93.5-60.3-93.5c-5.2-8 .6-18.5 10.1-18.5h34.8c4.4 0 8.5 2.4 10.6 6.3 26.1 48.8 20 33.6 36.6 68.5 0 0 6.1-11.7 36.6-68.5 2.1-3.9 6.2-6.3 10.6-6.3H274c9.5-.1 15.2 10.4 10.1 18.4zM384 121.9v6.1H256V0h6.1c6.4 0 12.5 2.5 17 7l97.9 98c4.5 4.5 7 10.6 7 16.9z"/></svg>',
+    // Add more file types and their corresponding SVG icons here
+  };
+
+  return icons[extension] || icons['default'] || '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!-- Font Awesome Pro 5.15.4 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) --><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24zm160-14.1v6.1H256V0h6.1c6.4 0 12.5 2.5 17 7l97.9 98c4.5 4.5 7 10.6 7 16.9z"/></svg>';
+};
+
+const ReactQuill = dynamic(() => import('react-quill'), { ssr: false })
+
+const KeyCodes = {
+  comma: 188,
+  enter: 13,
+};
+
+const delimiters = [KeyCodes.comma, KeyCodes.enter];
+
+interface Tag {
+  id: string;
+  text: string;
+  className?: string;
 }
 
 export default function KnowledgeBase() {
   const [articles, setArticles] = useState<Article[]>([])
   const [searchTerm, setSearchTerm] = useState("")
-  const [newArticle, setNewArticle] = useState<{ title: string; content: string; category: string; file: File | null }>({ title: "", content: "", category: "", file: null })
+  const [newArticle, setNewArticle] = useState<{
+    title: string;
+    content: string;
+    category: string;
+    files: File[];
+    tags: string[]; // Add this line
+  }>({
+    title: "",
+    content: "",
+    category: "",
+    files: [],
+    tags: [], // Add this line
+  });
   const [isAddingNew, setIsAddingNew] = useState(false)
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const { toast } = useToast()
+  const [selectedArticle, setSelectedArticle] = useState<Article | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [isViewingArticle, setIsViewingArticle] = useState(false)
 
   const fetchArticles = useCallback(async () => {
     setLoading(true)
@@ -57,14 +183,28 @@ export default function KnowledgeBase() {
       const querySnapshot = await getDocs(collection(db, "articles"))
       const fetchedArticles = querySnapshot.docs.map((doc) => {
         const data = doc.data();
+        const files = data.files.map((file: {
+          name: string;
+          url: string;
+          extractedText?: string;
+          thumbnailUrl?: string;
+        }) => ({
+          name: file.name,
+          url: file.url,
+          extractedText: file.extractedText,
+          thumbnailUrl: file.thumbnailUrl
+        }));
+        const extractedText = files.map((file: { extractedText?: string }) => file.extractedText).join(' ');
         return {
           id: doc.id,
           title: data.title,
           content: data.content,
           category: data.category,
-          fileUrl: data.fileUrl,
+          files: files,
           createdAt: data.createdAt.toDate(),
           createdBy: data.createdBy,
+          extractedText: extractedText,
+          tags: data.tags || [],
         } as Article;
       });
       setArticles(fetchedArticles)
@@ -98,46 +238,85 @@ export default function KnowledgeBase() {
     setSearchTerm(e.target.value)
   }
 
-  const filteredArticles = articles.filter(
-    (article) =>
-      article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      article.content.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredArticles = articles.filter(article => {
+    const matchesSearch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          article.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          (article.extractedText && article.extractedText.toLowerCase().includes(searchTerm.toLowerCase()));
+    const matchesCategory = !categoryFilter || article.category === categoryFilter;
+    const matchesTag = !tagFilter || article.tags.includes(tagFilter);
+    return matchesSearch && matchesCategory && matchesTag;
+  });
 
   const handleAddNew = () => {
     setIsAddingNew(true)
   }
 
-  const handleSave = async () => {
+  const handleSave = async (articleToSave: Article) => {
     setLoading(true)
     try {
-      let fileUrl = ""
-      if (newArticle.file) {
-        const storageRef = ref(storage, `files/${newArticle.file.name}`)
-        await uploadBytes(storageRef, newArticle.file)
-        fileUrl = await getDownloadURL(storageRef)
+      if (!articleToSave.title || !articleToSave.content || !articleToSave.category) {
+        throw new Error("Title, content, and category are required")
       }
 
-      await addDoc(collection(db, "articles"), {
-        ...newArticle,
-        fileUrl,
-        createdAt: new Date(),
-        createdBy: user?.uid,
-      })
+      const articleFiles: ArticleFile[] = [...(articleToSave.files || [])]
 
+      if (articleToSave.newFiles && articleToSave.newFiles.length > 0) {
+        for (const file of articleToSave.newFiles) {
+          const storageRef = ref(storage, `files/${file.name}`)
+          await uploadBytes(storageRef, file)
+          const fileUrl = await getDownloadURL(storageRef)
+          
+          let extractedText = ""
+          try {
+            extractedText = await extractTextFromFile(file)
+          } catch (error) {
+            console.error("Failed to extract text from file:", error)
+          }
+          const thumbnailUrl = await generateThumbnail(file)
+          articleFiles.push({
+            name: file.name,
+            url: fileUrl,
+            extractedText: extractedText || "",
+            thumbnailUrl: thumbnailUrl || ""
+          })
+        }
+      }
+
+      const articleData = {
+        title: articleToSave.title,
+        content: articleToSave.content,
+        category: articleToSave.category,
+        files: articleFiles,
+        createdAt: articleToSave.id ? articleToSave.createdAt : new Date(),
+        createdBy: articleToSave.id ? articleToSave.createdBy : user?.uid || 'anonymous',
+        tags: articleToSave.tags,
+      }
+
+      let docRef;
+      if (articleToSave.id) {
+        docRef = doc(db, "articles", articleToSave.id)
+        await updateDoc(docRef, articleData)
+      } else {
+        docRef = await addDoc(collection(db, "articles"), articleData)
+      }
+
+      console.log("Document written with ID: ", docRef.id)
       toast({
         title: "Success",
-        description: "Article saved successfully!",
+        description: `Article ${articleToSave.id ? 'updated' : 'saved'} successfully!`,
       })
-
-      setNewArticle({ title: "", content: "", category: "", file: null })
+      setNewArticle({ title: "", content: "", category: "", files: [], tags: [] })
       setIsAddingNew(false)
       fetchArticles()
     } catch (error) {
       console.error("Failed to save article:", error)
+      if (error instanceof Error) {
+        console.error("Error message:", error.message)
+        console.error("Error stack:", error.stack)
+      }
       toast({
         title: "Error",
-        description: "Failed to save article. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to save article. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -146,8 +325,8 @@ export default function KnowledgeBase() {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setNewArticle({ ...newArticle, file: e.target.files[0] })
+    if (e.target.files) {
+      setNewArticle({ ...newArticle, files: [...newArticle.files, ...Array.from(e.target.files)] })
     }
   }
 
@@ -178,7 +357,7 @@ export default function KnowledgeBase() {
     }
   }
 
-  const handleDelete = async (articleId: string) => {
+  const handleDeleteArticle = async (articleId: string) => {
     if (window.confirm("Are you sure you want to delete this article?")) {
       setLoading(true)
       try {
@@ -201,116 +380,280 @@ export default function KnowledgeBase() {
     }
   }
 
+  const handleOpenArticle = (article: Article) => {
+    setSelectedArticle(article)
+    setIsViewingArticle(true)
+  }
+
+  const handleCloseArticle = () => {
+    setIsViewingArticle(false)
+    setSelectedArticle(null)
+  }
+
+  const handleEditArticle = () => {
+    setIsViewingArticle(false)
+    setIsEditing(true)
+  }
+
+  const handleUpdateArticle = async (updatedArticle: Article) => {
+    setLoading(true);
+    try {
+      const articleRef = doc(db, "articles", updatedArticle.id);
+      const articleData = { ...updatedArticle };
+
+      // Handle new files
+      if (updatedArticle.newFiles && updatedArticle.newFiles.length > 0) {
+        const newFilePromises = updatedArticle.newFiles.map(async (file) => {
+          const storageRef = ref(storage, `files/${file.name}`);
+          await uploadBytes(storageRef, file);
+          const fileUrl = await getDownloadURL(storageRef);
+          const extractedText = await extractTextFromFile(file);
+          const thumbnailUrl = await generateThumbnail(file);
+          return {
+            name: file.name,
+            url: fileUrl,
+            extractedText: extractedText || "",
+            thumbnailUrl: thumbnailUrl || ""
+          };
+        });
+
+        const newFiles = await Promise.all(newFilePromises);
+        articleData.files = [...updatedArticle.files, ...newFiles];
+      }
+
+      delete articleData.newFiles; // Remove newFiles property before updating Firestore
+
+      await updateDoc(articleRef, articleData);
+      toast({
+        title: "Success",
+        description: "Article updated successfully!",
+      });
+      setSelectedArticle(null);
+      setIsViewingArticle(false);
+      fetchArticles();
+    } catch (error) {
+      console.error("Error updating article:", error);
+      toast({
+        title: "Error",
+        description: "Failed to update article. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveFile = (index: number) => {
+    if (selectedArticle) {
+      const updatedFiles = [...selectedArticle.files];
+      updatedFiles.splice(index, 1);
+      setSelectedArticle({ ...selectedArticle, files: updatedFiles });
+    }
+  };
+
+  const handleDeleteTag = (i: number) => {
+    setTags(tags.filter((tag, index) => index !== i));
+  };
+
+  const handleAddition = (tag: { id: string; text: string }) => {
+    setTags([...tags, tag]);
+  };
+
+  const handleDrag = (tag: { id: string; text: string }, currPos: number, newPos: number) => {
+    const newTags = tags.slice();
+    newTags.splice(currPos, 1);
+    newTags.splice(newPos, 0, tag);
+    setTags(newTags);
+  };
+
+  const handleCancelNewArticle = () => {
+    setIsAddingNew(false);
+    setNewArticle({
+      title: "",
+      content: "",
+      category: "",
+      files: [],
+      tags: [],
+    });
+  };
+
+  const handleSaveArticle = async (updatedArticle: Article) => {
+    setLoading(true)
+    try {
+      await updateDoc(doc(db, "articles", updatedArticle.id), {
+        title: updatedArticle.title,
+        content: updatedArticle.content,
+        category: updatedArticle.category,
+        tags: updatedArticle.tags,
+      })
+      toast({
+        title: "Success",
+        description: "Article updated successfully!",
+      })
+      fetchArticles()
+    } catch (error) {
+      console.error("Failed to update article:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update article. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   if (loading) {
     return <div className="flex justify-center items-center h-screen">Loading...</div>
   }
 
   return (
-    <div className="container mx-auto p-4 max-w-4xl">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Knowledge Base</h1>
-        {user ? (
-          <Button onClick={handleSignOut}>
-            <LogOut className="w-4 h-4 mr-2" /> Sign Out
-          </Button>
-        ) : (
-          <Button onClick={handleSignIn}>Sign In</Button>
-        )}
-      </div>
-      {user && (
-        <>
-          <div className="flex space-x-2 mb-4">
-            <Input
-              type="text"
-              placeholder="Search knowledge base..."
-              value={searchTerm}
-              onChange={handleSearch}
-              className="flex-grow"
-            />
-            <Button onClick={handleAddNew}>
-              <Plus className="w-4 h-4 mr-2" /> Add New
-            </Button>
-          </div>
-          {isAddingNew && (
-            <Card className="mb-4">
-              <CardHeader>
-                <CardTitle>Add New Article</CardTitle>
-                <CardDescription>Fill in the details for the new knowledge base article</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Input
-                  type="text"
-                  placeholder="Title"
-                  value={newArticle.title}
-                  onChange={(e) => setNewArticle({ ...newArticle, title: e.target.value })}
-                />
-                <Textarea
-                  placeholder="Content"
-                  value={newArticle.content}
-                  onChange={(e) => setNewArticle({ ...newArticle, content: e.target.value })}
-                />
-                <Select onValueChange={(value) => setNewArticle({ ...newArticle, category: value })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center space-x-2">
-                  <Input type="file" onChange={handleFileChange} />
-                  <Button variant="outline">
-                    <Upload className="w-4 h-4 mr-2" /> Attach File
-                  </Button>
-                </div>
-              </CardContent>
-              <CardFooter>
-                <Button onClick={handleSave}>
-                  <Save className="w-4 h-4 mr-2" /> Save Article
-                </Button>
-              </CardFooter>
-            </Card>
-          )}
-          <div className="space-y-4">
-            {filteredArticles.map((article) => (
-              <Card key={article.id}>
-                <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <CardTitle>{article.title}</CardTitle>
-                      <CardDescription>{article.category}</CardDescription>
-                    </div>
-                    <Button variant="destructive" onClick={() => handleDelete(article.id)}>
-                      Delete
-                    </Button>
-                  </div>
+    <div className="min-h-screen bg-gray-100">
+      <Navbar user={user} onSignOut={handleSignOut} onSignIn={handleSignIn} />
+      <div className="p-4">
+        {user && (
+          <>
+            <h1 className="text-3xl font-semibold mb-6">Dashboard</h1>
+            <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-8 w-full">
+              <Input
+                type="text"
+                placeholder="Search articles..."
+                value={searchTerm}
+                onChange={handleSearch}
+                className="w-full md:w-1/3"
+              />
+              <Select
+                value={categoryFilter || ""}
+                onValueChange={(value) => setCategoryFilter(value === "All" ? null : value)}
+              >
+                <SelectTrigger className="w-full md:w-1/4">
+                  <SelectValue placeholder="Filter by category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Categories</SelectItem>
+                  {categories.map((category) => (
+                    <SelectItem key={category} value={category}>
+                      {category}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={tagFilter || ""}
+                onValueChange={(value) => setTagFilter(value === "All" ? null : value)}
+              >
+                <SelectTrigger className="w-full md:w-1/4">
+                  <SelectValue placeholder="Filter by tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Tags</SelectItem>
+                  {Array.from(new Set(articles.flatMap(article => article.tags))).map((tag) => (
+                    <SelectItem key={tag} value={tag}>
+                      {tag}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={() => setIsAddingNew(true)} className="w-full md:w-auto">
+                Add New Article
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+              <Card className="shadow-sm bg-white">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Total Articles</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p>{article.content}</p>
-                  {article.fileUrl && (
-                    <a href={article.fileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                      Attached File
-                    </a>
-                  )}
+                  <p className="text-4xl font-bold">{articles.length}</p>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        </>
+              <Card className="shadow-sm bg-white">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Categories</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-4xl font-bold">{categories.length}</p>
+                </CardContent>
+              </Card>
+              <Card className="shadow-sm bg-white">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Total Tags</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-4xl font-bold">{Array.from(new Set(articles.flatMap(article => article.tags))).length}</p>
+                </CardContent>
+              </Card>
+            </div>
+            
+            {isAddingNew && (
+              <ArticleModal
+                mode="add"
+                article={null}
+                onClose={() => setIsAddingNew(false)}
+                onSave={handleSave}
+                categories={categories}
+              />
+            )}
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredArticles.map((article) => (
+                <Card 
+                  key={article.id} 
+                  className="mb-4 cursor-pointer hover:shadow-lg transition-shadow duration-200 shadow-md relative"
+                  onClick={() => handleOpenArticle(article)}
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteArticle(article.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                  <CardContent className="pt-8">
+                    <h3 className="text-lg font-semibold mb-2">{article.title}</h3>
+                    <p className="text-sm text-gray-500 mb-2">{article.category}</p>
+                    <div dangerouslySetInnerHTML={{ __html: article.content.substring(0, 150) + '...' }} />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {article.tags.map(tag => (
+                        <span key={tag} className="inline-block bg-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700">
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  </CardContent>
+                  <CardFooter className="flex justify-end items-center">
+                    {article.files && article.files.length > 0 && (
+                      <Paperclip className="w-4 h-4 text-gray-500" />
+                    )}
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
+          </>
+        )}
+        {!user && (
+          <Card className="shadow-md">
+            <CardHeader>
+              <CardTitle>Welcome to the Knowledge Base</CardTitle>
+              <CardDescription>Please sign in to access the knowledge base.</CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+        <Toaster />
+      </div>
+      {isViewingArticle && selectedArticle && (
+        <ArticleModal
+          mode="view"
+          article={selectedArticle}
+          onClose={handleCloseArticle}
+          onSave={handleUpdateArticle}
+          categories={categories}
+        />
       )}
-      {!user && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Welcome to the Knowledge Base</CardTitle>
-            <CardDescription>Please sign in to access the knowledge base.</CardDescription>
-          </CardHeader>
-        </Card>
-      )}
-      <Toaster />
     </div>
   )
 }
