@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { X, Save } from 'lucide-react'
+import { X, Save, Trash2 } from 'lucide-react'
 import { Article, ArticleFile } from './KnowledgeBase'  // Import the Article and ArticleFile interfaces
 import dynamic from 'next/dynamic'
 import { WithContext as ReactTags } from 'react-tag-input'
+import { Switch } from "@/components/ui/switch"
 
 const ReactQuill = dynamic(() => import('react-quill'), { ssr: false })
 
@@ -30,7 +31,9 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
       files: [],
       createdAt: new Date(),
       createdBy: '',
-      extractedText: ''
+      extractedText: '',
+      isPrivate: false,
+      ownerId: '',
     }
   )
 
@@ -41,16 +44,18 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
   const handleSave = () => {
     const updatedArticle = {
       ...editedArticle,
+      tags: editedArticle.tags.map(tag => tag.toLowerCase()),
       files: [...editedArticle.files, ...(editedArticle.newFiles || []).map(file => ({
         name: file.name,
-        url: URL.createObjectURL(file),
+        url: '', // This will be updated in KnowledgeBase.tsx
         extractedText: '',
         thumbnailUrl: ''
-      }))]
+      }))],
+      newFiles: editedArticle.newFiles || []
     };
     onSave(updatedArticle);
     onClose();
-  }
+  };
 
   const handleCancel = () => {
     if (mode === 'add') {
@@ -60,6 +65,24 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
       setIsEditing(false)
     }
   }
+
+  const handleDeleteFile = (index: number) => {
+    const newFiles = [...editedArticle.files];
+    newFiles.splice(index, 1);
+    setEditedArticle({ ...editedArticle, files: newFiles });
+  };
+  
+  const handleAddTag = (tag: { id: string; text: string }) => {
+    const lowercaseTag = { id: tag.text.toLowerCase(), text: tag.text.toLowerCase() };
+    setEditedArticle({
+      ...editedArticle,
+      tags: [...editedArticle.tags, lowercaseTag.text]
+    });
+  };
+
+  const isFormValid = editedArticle.title.trim() !== '' && 
+                      editedArticle.content.trim() !== '' && 
+                      editedArticle.category !== '';
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -84,30 +107,31 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
             </Button>
           </div>
           {isEditing && (
-            <Select
-              value={editedArticle.category}
-              onValueChange={(value) => setEditedArticle({ ...editedArticle, category: value })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select category" />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {!isEditing && (
-            <div className="flex flex-wrap gap-2">
-              {editedArticle.tags.map(tag => (
-                <span key={tag} className="bg-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700">
-                  #{tag}
-                </span>
-              ))}
-            </div>
+            <>
+              <Select
+                value={editedArticle.category}
+                onValueChange={(value) => setEditedArticle({ ...editedArticle, category: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((category) => (
+                    <SelectItem key={category} value={category}>
+                      {category}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center space-x-2 mt-4">
+                <Switch
+                  id="private-mode"
+                  checked={editedArticle.isPrivate}
+                  onCheckedChange={(checked) => setEditedArticle({ ...editedArticle, isPrivate: checked })}
+                />
+                <label htmlFor="private-mode">Private Article</label>
+              </div>
+            </>
           )}
         </CardHeader>
         <CardContent>
@@ -123,14 +147,17 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
                   Tags
                 </label>
                 <ReactTags
-                  tags={editedArticle.tags.map(tag => ({ id: tag, text: tag, className: 'react-tags__tag' }))}
+                tags={editedArticle.tags.map(tag => ({ id: tag.toLowerCase(), text: tag.toLowerCase(), className: 'react-tags__tag' }))}
                   handleDelete={(i) => {
                     const newTags = [...editedArticle.tags];
                     newTags.splice(i, 1);
                     setEditedArticle({ ...editedArticle, tags: newTags });
                   }}
                   handleAddition={(tag) => {
-                    setEditedArticle({ ...editedArticle, tags: [...editedArticle.tags, tag.text] });
+                    const lowercaseTag = tag.text.toLowerCase();
+                    if (!editedArticle.tags.includes(lowercaseTag)) {
+                      setEditedArticle({ ...editedArticle, tags: [...editedArticle.tags, lowercaseTag] });
+                    }
                   }}
                   delimiters={[188, 13]} // comma and enter
                   inputFieldPosition="bottom"
@@ -140,8 +167,8 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
                     tagInput: 'react-tags__tagInput',
                     tagInputField: 'react-tags__tagInputField',
                     selected: 'react-tags__selected',
-                    tag: 'react-tags__tag',
-                    remove: 'react-tags__remove',
+                    tag: 'react-tags__selected-tag',
+                    remove: 'react-tags__selected-tag-remove',  // Add this line
                     suggestions: 'react-tags__suggestions',
                     activeSuggestion: 'react-tags__activeSuggestion',
                     editTagInput: 'react-tags__editTagInput',
@@ -190,6 +217,16 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
                 <a href={file.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
                   {file.name}
                 </a>
+                {isEditing && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteFile(index)}
+                    className="text-red-500 hover:text-red-700"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             ))}
           </div>
@@ -197,7 +234,7 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
         <CardFooter>
           {isEditing ? (
             <>
-              <Button onClick={handleSave} className="mr-2">
+              <Button onClick={handleSave} className="mr-2" disabled={!isFormValid}>
                 <Save className="h-4 w-4 mr-2" /> Save
               </Button>
               <Button onClick={handleCancel} variant="outline">

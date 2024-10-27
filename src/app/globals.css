@@ -6,6 +6,58 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* React-tags styles */
+.react-tags__tags {
+  position: relative;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 5px;
+  background: #fff;
+}
+
+.react-tags__selected {
+  display: inline;
+}
+
+.react-tags__selected-tag {
+  background: #edf2f7;
+  border: 1px solid #cbd5e0;
+  color: #4a5568;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  margin: 0 5px 5px 0;
+  padding: 5px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.react-tags__selected-tag:hover {
+  background: #e2e8f0;
+}
+
+.react-tags__selected-tag-name {
+  margin-right: 6px;
+}
+
+.react-tags__selected-tag-remove {
+  color: #4a5568;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.react-tags__selected-tag:hover .react-tags__selected-tag-remove {
+  color: #2d3748;
+}
+
+.react-tags__search-input {
+  max-width: 100%;
+  margin-top: 7px;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
@@ -76,4 +128,3 @@ body {
     @apply bg-background text-foreground;
   }
 }
-

@@ -1,16 +1,16 @@
 "use client"
 
 import React, { useCallback, useEffect, useState } from "react"
-import { Plus, Save, LogOut, Trash2, Search, Paperclip } from "lucide-react"
+import { Plus, Save, LogOut, Trash2, Search, Paperclip, Lock, Upload, Download } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { initializeApp } from "firebase/app"
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore"
+import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, getDoc } from "firebase/firestore"
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth"
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage"
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage"
 import { useToast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import dynamic from 'next/dynamic'
@@ -18,6 +18,8 @@ import 'react-quill/dist/quill.snow.css'
 import { WithContext as ReactTags } from 'react-tag-input';
 import { ArticleModal } from './ArticleModal'
 import { Navbar } from './Navbar'
+import { saveAs } from 'file-saver';
+import Papa from 'papaparse';
 
 
 // Your Firebase configuration
@@ -36,7 +38,7 @@ const db = getFirestore(app)
 const auth = getAuth(app)
 const storage = getStorage(app)
 
-const categories = ["Portal", "MDS", "Candidates Panel", "Safeguarding", "DBS", "Stage 1", "Stage 2"]
+const categories = ["Portal", "MDS", "Candidates Panel", "Safeguarding", "DBS", "Stage 1", "Stage 2", "Other"]
 
 export interface ArticleFile {
   name: string;
@@ -56,6 +58,13 @@ export interface Article {
   extractedText?: string;
   tags: string[];
   newFiles?: File[];
+  isPrivate: boolean;
+  ownerId: string;
+}
+
+export interface Tag {
+  id: string;
+  text: string;
 }
 
 async function extractTextFromFile(file: File): Promise<string> {
@@ -144,10 +153,14 @@ const KeyCodes = {
 
 const delimiters = [KeyCodes.comma, KeyCodes.enter];
 
-interface Tag {
-  id: string;
-  text: string;
-  className?: string;
+interface CSVArticleData {
+  title: string;
+  content: string;
+  category: string;
+  tags: string;
+  isPrivate: string;
+  createdAt: string;
+  createdBy: string;
 }
 
 export default function KnowledgeBase() {
@@ -177,6 +190,9 @@ export default function KnowledgeBase() {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [isViewingArticle, setIsViewingArticle] = useState(false)
 
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+
   const fetchArticles = useCallback(async () => {
     setLoading(true)
     try {
@@ -205,6 +221,8 @@ export default function KnowledgeBase() {
           createdBy: data.createdBy,
           extractedText: extractedText,
           tags: data.tags || [],
+          isPrivate: data.isPrivate || false,
+          ownerId: data.ownerId || 'anonymous',
         } as Article;
       });
       setArticles(fetchedArticles)
@@ -239,46 +257,54 @@ export default function KnowledgeBase() {
   }
 
   const filteredArticles = articles.filter(article => {
-    const matchesSearch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          article.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (article.extractedText && article.extractedText.toLowerCase().includes(searchTerm.toLowerCase()));
-    const matchesCategory = !categoryFilter || article.category === categoryFilter;
-    const matchesTag = !tagFilter || article.tags.includes(tagFilter);
-    return matchesSearch && matchesCategory && matchesTag;
-  });
+    const searchMatch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        article.content.toLowerCase().includes(searchTerm.toLowerCase())
+    const categoryMatch = selectedCategories.length === 0 || selectedCategories.includes(article.category)
+    const tagMatch = selectedTags.length === 0 || selectedTags.some(tag => article.tags.includes(tag))
+    return searchMatch && categoryMatch && tagMatch
+  })
 
   const handleAddNew = () => {
     setIsAddingNew(true)
   }
 
   const handleSave = async (articleToSave: Article) => {
-    setLoading(true)
+    setLoading(true);
     try {
       if (!articleToSave.title || !articleToSave.content || !articleToSave.category) {
-        throw new Error("Title, content, and category are required")
+        throw new Error("Title, content, and category are required");
+      }
+      
+      let docRef;
+      if (articleToSave.id) {
+        docRef = doc(db, "articles", articleToSave.id);
+      } else {
+        docRef = doc(collection(db, "articles"));
       }
 
-      const articleFiles: ArticleFile[] = [...(articleToSave.files || [])]
+      const articleId = docRef.id;
+      const articleFiles: ArticleFile[] = [...(articleToSave.files || [])];
 
+      // Handle new files
       if (articleToSave.newFiles && articleToSave.newFiles.length > 0) {
         for (const file of articleToSave.newFiles) {
-          const storageRef = ref(storage, `files/${file.name}`)
-          await uploadBytes(storageRef, file)
-          const fileUrl = await getDownloadURL(storageRef)
+          const storageRef = ref(storage, `articles/${articleId}/${file.name}`);
+          await uploadBytes(storageRef, file);
+          const fileUrl = await getDownloadURL(storageRef);
           
-          let extractedText = ""
+          let extractedText = "";
           try {
-            extractedText = await extractTextFromFile(file)
+            extractedText = await extractTextFromFile(file);
           } catch (error) {
-            console.error("Failed to extract text from file:", error)
+            console.error("Failed to extract text from file:", error);
           }
-          const thumbnailUrl = await generateThumbnail(file)
+          const thumbnailUrl = await generateThumbnail(file);
           articleFiles.push({
             name: file.name,
             url: fileUrl,
             extractedText: extractedText || "",
             thumbnailUrl: thumbnailUrl || ""
-          })
+          });
         }
       }
 
@@ -288,41 +314,37 @@ export default function KnowledgeBase() {
         category: articleToSave.category,
         files: articleFiles,
         createdAt: articleToSave.id ? articleToSave.createdAt : new Date(),
-        createdBy: articleToSave.id ? articleToSave.createdBy : user?.uid || 'anonymous',
-        tags: articleToSave.tags,
-      }
+        createdBy: articleToSave.id ? articleToSave.createdBy : user?.email || 'anonymous',
+        tags: articleToSave.tags.map(tag => tag.toLowerCase()),
+        isPrivate: articleToSave.isPrivate,
+        ownerId: user?.email || 'anonymous',
+      };
 
-      let docRef;
       if (articleToSave.id) {
-        docRef = doc(db, "articles", articleToSave.id)
-        await updateDoc(docRef, articleData)
+        await updateDoc(docRef, articleData);
       } else {
-        docRef = await addDoc(collection(db, "articles"), articleData)
+        await setDoc(docRef, articleData);
       }
 
-      console.log("Document written with ID: ", docRef.id)
+      console.log("Document written with ID: ", docRef.id);
       toast({
         title: "Success",
         description: `Article ${articleToSave.id ? 'updated' : 'saved'} successfully!`,
-      })
-      setNewArticle({ title: "", content: "", category: "", files: [], tags: [] })
-      setIsAddingNew(false)
-      fetchArticles()
+      });
+      setNewArticle({ title: "", content: "", category: "", files: [], tags: [] });
+      setIsAddingNew(false);
+      fetchArticles();
     } catch (error) {
-      console.error("Failed to save article:", error)
-      if (error instanceof Error) {
-        console.error("Error message:", error.message)
-        console.error("Error stack:", error.stack)
-      }
+      console.error("Error saving article:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to save article. Please try again.",
+        description: "Failed to save article. Please try again.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -380,34 +402,40 @@ export default function KnowledgeBase() {
     }
   }
 
-  const handleOpenArticle = (article: Article) => {
-    setSelectedArticle(article)
-    setIsViewingArticle(true)
-  }
-
-  const handleCloseArticle = () => {
-    setIsViewingArticle(false)
-    setSelectedArticle(null)
-  }
-
-  const handleEditArticle = () => {
-    setIsViewingArticle(false)
-    setIsEditing(true)
-  }
 
   const handleUpdateArticle = async (updatedArticle: Article) => {
     setLoading(true);
     try {
       const articleRef = doc(db, "articles", updatedArticle.id);
-      const articleData = { ...updatedArticle };
+      const originalArticle = await getDoc(articleRef);
+      const originalFiles = originalArticle.data()?.files || [];
 
-      // Handle new files
-      if (updatedArticle.newFiles && updatedArticle.newFiles.length > 0) {
-        const newFilePromises = updatedArticle.newFiles.map(async (file) => {
-          const storageRef = ref(storage, `files/${file.name}`);
+      // Delete files that are no longer in the updated article
+      await Promise.all(originalFiles.map(async (file: ArticleFile) => {
+        if (!updatedArticle.files.some(f => f.name === file.name)) {
+          const fileRef = ref(storage, `articles/${updatedArticle.id}/${file.name}`);
+          try {
+            await deleteObject(fileRef);
+            console.log(`File ${file.name} deleted successfully`);
+          } catch (error) {
+            console.error(`Error deleting file ${file.name}:`, error);
+          }
+        }
+      }));
+
+      // Keep existing files and process new files
+      const updatedFiles = [
+        ...(updatedArticle.files?.filter(file => file.url) || []),
+        ...(await Promise.all((updatedArticle.newFiles || []).map(async (file) => {
+          const storageRef = ref(storage, `articles/${updatedArticle.id}/${file.name}`);
           await uploadBytes(storageRef, file);
           const fileUrl = await getDownloadURL(storageRef);
-          const extractedText = await extractTextFromFile(file);
+          let extractedText = "";
+          try {
+            extractedText = await extractTextFromFile(file);
+          } catch (error) {
+            console.error("Failed to extract text from file:", error);
+          }
           const thumbnailUrl = await generateThumbnail(file);
           return {
             name: file.name,
@@ -415,15 +443,20 @@ export default function KnowledgeBase() {
             extractedText: extractedText || "",
             thumbnailUrl: thumbnailUrl || ""
           };
-        });
+        })))
+      ];
 
-        const newFiles = await Promise.all(newFilePromises);
-        articleData.files = [...updatedArticle.files, ...newFiles];
-      }
+      // Create a new object with only the fields we want to update in Firestore
+      const articleUpdateData = {
+        title: updatedArticle.title,
+        content: updatedArticle.content,
+        category: updatedArticle.category,
+        tags: updatedArticle.tags,
+        files: updatedFiles,
+        isPrivate: updatedArticle.isPrivate,
+      };
 
-      delete articleData.newFiles; // Remove newFiles property before updating Firestore
-
-      await updateDoc(articleRef, articleData);
+      await updateDoc(articleRef, articleUpdateData);
       toast({
         title: "Success",
         description: "Article updated successfully!",
@@ -456,7 +489,8 @@ export default function KnowledgeBase() {
   };
 
   const handleAddition = (tag: { id: string; text: string }) => {
-    setTags([...tags, tag]);
+    const lowercaseTag = { id: tag.text.toLowerCase(), text: tag.text.toLowerCase() };
+    setTags([...tags, lowercaseTag]);
   };
 
   const handleDrag = (tag: { id: string; text: string }, currPos: number, newPos: number) => {
@@ -503,148 +537,215 @@ export default function KnowledgeBase() {
     }
   }
 
+  const toggleCategory = (category: string) => {
+    setSelectedCategories(prev => 
+      prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
+    )
+  }
+  
+  const toggleTag = (tag: string) => {
+    setSelectedTags(prev => 
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    )
+  }
+  
+  const getAllTags = () => {
+    return Array.from(new Set(articles.flatMap(article => article.tags)))
+  }
+
+  const handleOpenArticle = (article: Article) => {
+    setSelectedArticle(article);
+    setIsViewingArticle(true);
+  };
+
+  const handleCloseArticle = () => {
+    setSelectedArticle(null);
+    setIsViewingArticle(false);
+  };
+
+  const exportToCSV = () => {
+    const csvData = filteredArticles.map(article => ({
+      title: article.title,
+      content: article.content,
+      category: article.category,
+      tags: article.tags.join(', '),
+      isPrivate: article.isPrivate,
+      createdAt: article.createdAt.toISOString(),
+      createdBy: article.createdBy,
+    }));
+
+    const csv = Papa.unparse(csvData);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    saveAs(blob, 'knowledge_base_export.csv');
+  };
+
+  const importFromCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      Papa.parse<CSVArticleData>(file, {
+        complete: async (results) => {
+          const importedArticles = results.data.map((row) => ({
+            title: row.title,
+            content: row.content,
+            category: row.category,
+            tags: row.tags.split(',').map((tag) => tag.trim()),
+            isPrivate: row.isPrivate === 'true',
+            createdAt: new Date(row.createdAt),
+            createdBy: row.createdBy,
+            ownerId: user?.uid || 'anonymous',
+          }));
+
+          for (const article of importedArticles) {
+            await handleSave(article as Article);
+          }
+
+          toast({
+            title: "Success",
+            description: `Imported ${importedArticles.length} articles.`,
+          });
+          fetchArticles();
+        },
+        header: true,
+        skipEmptyLines: true,
+      });
+    }
+  };
+
   if (loading) {
     return <div className="flex justify-center items-center h-screen">Loading...</div>
   }
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navbar user={user} onSignOut={handleSignOut} onSignIn={handleSignIn} />
-      <div className="p-4">
-        {user && (
-          <>
-            <h1 className="text-3xl font-semibold mb-6">Dashboard</h1>
-            <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2 mb-8 w-full">
+      <Navbar
+        user={user}
+        onSignOut={handleSignOut}
+        onSignIn={handleSignIn}
+        articleCount={filteredArticles.length}
+      />
+      <div className="p-4 flex">
+        <div className="w-full pr-4">
+          <h1 className="text-3xl font-semibold mb-6">Dashboard</h1>
+          <div className="flex space-x-4 mb-8">
+            <Input
+              type="text"
+              placeholder="Search articles..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full"
+            />
+            <Button onClick={handleAddNew}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add New Article
+            </Button>
+            <Button onClick={exportToCSV} title="Export to CSV">
+              <Download className="h-4 w-4" />
+            </Button>
+            <label className="cursor-pointer">
               <Input
-                type="text"
-                placeholder="Search articles..."
-                value={searchTerm}
-                onChange={handleSearch}
-                className="w-full md:w-1/3"
+                id="csvFileInput"
+                type="file"
+                accept=".csv"
+                onChange={importFromCSV}
+                className="hidden"
               />
-              <Select
-                value={categoryFilter || ""}
-                onValueChange={(value) => setCategoryFilter(value === "All" ? null : value)}
-              >
-                <SelectTrigger className="w-full md:w-1/4">
-                  <SelectValue placeholder="Filter by category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All">All Categories</SelectItem>
-                  {categories.map((category) => (
-                    <SelectItem key={category} value={category}>
-                      {category}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={tagFilter || ""}
-                onValueChange={(value) => setTagFilter(value === "All" ? null : value)}
-              >
-                <SelectTrigger className="w-full md:w-1/4">
-                  <SelectValue placeholder="Filter by tag" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="All">All Tags</SelectItem>
-                  {Array.from(new Set(articles.flatMap(article => article.tags))).map((tag) => (
-                    <SelectItem key={tag} value={tag}>
-                      {tag}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button onClick={() => setIsAddingNew(true)} className="w-full md:w-auto">
-                Add New Article
+              <Button onClick={() => document.getElementById('csvFileInput')?.click()} title="Import from CSV">
+                <Upload className="h-4 w-4" />
               </Button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              <Card className="shadow-sm bg-white">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Total Articles</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-4xl font-bold">{articles.length}</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-sm bg-white">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Categories</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-4xl font-bold">{categories.length}</p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-sm bg-white">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Total Tags</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-4xl font-bold">{Array.from(new Set(articles.flatMap(article => article.tags))).length}</p>
-                </CardContent>
-              </Card>
-            </div>
-            
-            {isAddingNew && (
-              <ArticleModal
-                mode="add"
-                article={null}
-                onClose={() => setIsAddingNew(false)}
-                onSave={handleSave}
-                categories={categories}
-              />
-            )}
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredArticles.map((article) => (
-                <Card 
-                  key={article.id} 
-                  className="mb-4 cursor-pointer hover:shadow-lg transition-shadow duration-200 shadow-md relative"
-                  onClick={() => handleOpenArticle(article)}
+            </label>
+          </div>
+          
+          {isAddingNew && (
+            <ArticleModal
+              mode="add"
+              article={null}
+              onClose={() => setIsAddingNew(false)}
+              onSave={handleSave}
+              categories={categories}
+            />
+          )}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filteredArticles.map((article) => (
+              <Card 
+                key={article.id} 
+                className="flex flex-col justify-between hover:shadow-lg transition-shadow duration-200 shadow-md relative cursor-pointer"
+                onClick={() => handleOpenArticle(article)}
+              >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-2 right-2 text-red-500 hover:text-red-700 z-10"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteArticle(article.id);
+                  }}
                 >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteArticle(article.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                  <CardContent className="pt-8">
-                    <h3 className="text-lg font-semibold mb-2">{article.title}</h3>
-                    <p className="text-sm text-gray-500 mb-2">{article.category}</p>
-                    <div dangerouslySetInnerHTML={{ __html: article.content.substring(0, 150) + '...' }} />
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {article.tags.map(tag => (
-                        <span key={tag} className="inline-block bg-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-                  </CardContent>
-                  <CardFooter className="flex justify-end items-center">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+                <CardContent className="p-6">
+                  <h3 className="text-xl font-semibold mb-2 line-clamp-2">{article.title}</h3>
+                  <p className="text-sm text-gray-500 mb-2">{article.category}</p>
+                  <div className="text-sm text-gray-700 mb-4 line-clamp-3" dangerouslySetInnerHTML={{ __html: article.content }} />
+                  <div className="flex flex-wrap gap-2">
+                    {article.tags.map(tag => (
+                      <span key={tag} className="inline-block bg-gray-200 rounded-full px-3 py-1 text-xs font-semibold text-gray-700">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                </CardContent>
+                <CardFooter className="flex justify-end items-center p-4 bg-gray-50">
+                  <div className="flex items-center space-x-2">
                     {article.files && article.files.length > 0 && (
                       <Paperclip className="w-4 h-4 text-gray-500" />
                     )}
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          </>
-        )}
-        {!user && (
-          <Card className="shadow-md">
-            <CardHeader>
-              <CardTitle>Welcome to the Knowledge Base</CardTitle>
-              <CardDescription>Please sign in to access the knowledge base.</CardDescription>
-            </CardHeader>
-          </Card>
-        )}
-        <Toaster />
+                    {article.isPrivate && (
+                      <Lock className="w-4 h-4 text-gray-500" />
+                    )}
+                  </div>
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        </div>
+        
+        <div className="w-64 bg-white p-4 shadow-md overflow-y-auto"> {/* Adjusted width and removed fixed positioning */}
+        <h2 className="text-lg font-bold mb-3">Filters</h2>
+          <div className="mb-4">
+            <h3 className="text-md font-semibold mb-2">Categories</h3>
+            {categories.map(category => (
+              <div key={category} className="flex items-center mb-1">
+                <input
+                  type="checkbox"
+                  id={`category-${category}`}
+                  checked={selectedCategories.includes(category)}
+                  onChange={() => toggleCategory(category)}
+                  className="mr-2"
+                />
+                <label htmlFor={`category-${category}`} className="text-sm">{category}</label>
+              </div>
+            ))}
+          </div>
+          <div>
+            <h3 className="text-md font-semibold mb-2">Tags</h3>
+            {getAllTags().map(tag => (
+              <div key={tag} className="flex items-center mb-1">
+                <input
+                  type="checkbox"
+                  id={`tag-${tag}`}
+                  checked={selectedTags.includes(tag)}
+                  onChange={() => toggleTag(tag)}
+                  className="mr-2"
+                />
+                <label htmlFor={`tag-${tag}`} className="text-sm">{tag}</label>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
+      
+      <Toaster />
       {isViewingArticle && selectedArticle && (
         <ArticleModal
           mode="view"
