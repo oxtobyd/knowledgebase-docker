@@ -35,7 +35,7 @@ const db = getFirestore(app)
 const auth = getAuth(app)
 const storage = getStorage(app)
 
-const categories = ["Portal", "MDS", "Candidates Panel", "Safeguarding", "DBS", "Stage 1", "Stage 2", "Other"]
+const categories = ["Portal", "MDS", "Candidates Panel", "Safeguarding", "DBS", "Stage 1", "Stage 2", "Training", "Other"]
 
 export interface ArticleFile {
   name: string;
@@ -593,7 +593,7 @@ export default function KnowledgeBase() {
   }
   
   const getAllTags = () => {
-    return Array.from(new Set(articles.flatMap(article => article.tags)))
+    return Array.from(new Set(articles.flatMap(article => article.tags))).sort((a, b) => a.localeCompare(b))
   }
 
   const handleOpenArticle = (article: Article) => {
