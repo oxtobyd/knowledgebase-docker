@@ -1,25 +1,22 @@
 "use client"
 
 import React, { useCallback, useEffect, useState } from "react"
-import { Plus, Save, LogOut, Trash2, Search, Paperclip, Lock, Upload, Download } from "lucide-react"
+import { Plus, Trash2, Paperclip, Lock, Upload, Download } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { initializeApp } from "firebase/app"
-import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc, getDoc } from "firebase/firestore"
+import { getFirestore, collection, getDocs, deleteDoc, doc, updateDoc, setDoc, getDoc } from "firebase/firestore"
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, User } from "firebase/auth"
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage"
 import { useToast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import dynamic from 'next/dynamic'
 import 'react-quill/dist/quill.snow.css'
-import { WithContext as ReactTags } from 'react-tag-input';
 import { ArticleModal } from './ArticleModal'
 import { Navbar } from './Navbar'
-import { saveAs } from 'file-saver';
-import Papa from 'papaparse';
+import { saveAs } from 'file-saver'
+import Papa from 'papaparse'
 
 
 // Your Firebase configuration
@@ -47,6 +44,12 @@ export interface ArticleFile {
   thumbnailUrl?: string;
 }
 
+export interface Amendment {
+  timestamp: Date;
+  userId: string;
+  userEmail: string;
+}
+
 export interface Article {
   id: string;
   title: string;
@@ -60,6 +63,9 @@ export interface Article {
   newFiles?: File[];
   isPrivate: boolean;
   ownerId: string;
+  amendments: Amendment[];
+  lastModified?: Date;
+  lastModifiedBy?: string;
 }
 
 export interface Tag {
@@ -223,6 +229,17 @@ export default function KnowledgeBase() {
           tags: data.tags || [],
           isPrivate: data.isPrivate || false,
           ownerId: data.ownerId || 'anonymous',
+          amendments: (data.amendments || []).map((amendment: {
+            timestamp: { toDate: () => Date };
+            userId: string;
+            userEmail: string;
+          }) => ({
+            timestamp: amendment.timestamp.toDate(),
+            userId: amendment.userId,
+            userEmail: amendment.userEmail
+          })),
+          lastModified: data.lastModified?.toDate(),
+          lastModifiedBy: data.lastModifiedBy
         } as Article;
       });
       setArticles(fetchedArticles)
@@ -308,16 +325,29 @@ export default function KnowledgeBase() {
         }
       }
 
+      const now = new Date();
+      const currentUserEmail = user?.email || 'anonymous';
+
       const articleData = {
         title: articleToSave.title,
         content: articleToSave.content,
         category: articleToSave.category,
         files: articleFiles,
-        createdAt: articleToSave.id ? articleToSave.createdAt : new Date(),
-        createdBy: articleToSave.id ? articleToSave.createdBy : user?.email || 'anonymous',
+        createdAt: articleToSave.id ? articleToSave.createdAt : now,
+        createdBy: articleToSave.id ? articleToSave.createdBy : currentUserEmail,
         tags: articleToSave.tags.map(tag => tag.toLowerCase()),
         isPrivate: articleToSave.isPrivate,
-        ownerId: user?.email || 'anonymous',
+        ownerId: currentUserEmail,
+        lastModified: now,
+        lastModifiedBy: currentUserEmail,
+        amendments: [
+          ...(articleToSave.amendments || []),
+          {
+            timestamp: now,
+            userId: user?.uid || 'anonymous',
+            userEmail: currentUserEmail
+          }
+        ]
       };
 
       if (articleToSave.id) {
@@ -446,6 +476,9 @@ export default function KnowledgeBase() {
         })))
       ];
 
+      const now = new Date();
+      const currentUserEmail = user?.email || 'anonymous';
+
       // Create a new object with only the fields we want to update in Firestore
       const articleUpdateData = {
         title: updatedArticle.title,
@@ -454,6 +487,16 @@ export default function KnowledgeBase() {
         tags: updatedArticle.tags,
         files: updatedFiles,
         isPrivate: updatedArticle.isPrivate,
+        lastModified: now,
+        lastModifiedBy: currentUserEmail,
+        amendments: [
+          ...(originalArticle.data()?.amendments || []),
+          {
+            timestamp: now,
+            userId: user?.uid || 'anonymous',
+            userEmail: currentUserEmail
+          }
+        ]
       };
 
       await updateDoc(articleRef, articleUpdateData);

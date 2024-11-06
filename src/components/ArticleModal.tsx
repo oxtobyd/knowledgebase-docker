@@ -3,8 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { X, Save, Trash2 } from 'lucide-react'
-import { Article, ArticleFile } from './KnowledgeBase'  // Import the Article and ArticleFile interfaces
+import { X, Save, Trash2, CalendarDays, Clock, User } from 'lucide-react'
+import { Article, ArticleFile, Amendment } from './KnowledgeBase'  // Import the Article and ArticleFile interfaces
 import dynamic from 'next/dynamic'
 import { WithContext as ReactTags } from 'react-tag-input'
 import { Switch } from "@/components/ui/switch"
@@ -19,21 +19,64 @@ interface ArticleModalProps {
   categories: string[]
 }
 
+function TimeAgo({ date }: { date: Date }) {
+  const formatTimeAgo = (date: Date) => {
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (diffInSeconds < 60) return 'just now';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  return <span title={date.toLocaleString()}>{formatTimeAgo(date)}</span>;
+}
+
+function AmendmentHistory({ amendments }: { amendments?: Amendment[] }) {
+  if (!amendments?.length) return null;
+
+  return (
+    <div className="mt-4 space-y-3">
+      <h4 className="font-semibold text-sm text-gray-700">Amendment History</h4>
+      <div className="max-h-40 overflow-y-auto space-y-2">
+        {amendments.slice().reverse().map((amendment, index) => (
+          <div 
+            key={amendment.timestamp.getTime()} 
+            className="flex items-start space-x-2 text-sm text-gray-600 p-2 rounded-md bg-gray-50"
+          >
+            <User className="h-4 w-4 mt-0.5" />
+            <div>
+              <span className="font-medium">{amendment.userEmail}</span>
+              <span className="mx-1">•</span>
+              <TimeAgo date={amendment.timestamp} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ArticleModal({ mode, article, onClose, onSave, categories }: ArticleModalProps) {
   const [isEditing, setIsEditing] = useState(mode === 'edit' || mode === 'add')
   const [editedArticle, setEditedArticle] = useState<Article>(
     article || {
       id: '',
       title: '',
-      content: '',
+      content: '', 
       category: '',
-      tags: [],
-      files: [],
+      tags: [] as string[],
+      files: [] as ArticleFile[],
       createdAt: new Date(),
       createdBy: '',
       extractedText: '',
       isPrivate: false,
       ownerId: '',
+      amendments: [] as Amendment[],
+      lastModified: new Date(),
+      lastModifiedBy: '',
     }
   )
 
@@ -86,8 +129,8 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <Card className="w-full max-w-2xl max-h-[90vh] overflow-auto">
-        <CardHeader className="flex flex-col space-y-1.5">
+      <div className="bg-white rounded-lg w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="p-6">
           <div className="flex items-center justify-between">
             {isEditing ? (
               <Input
@@ -133,8 +176,6 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
               </div>
             </>
           )}
-        </CardHeader>
-        <CardContent>
           {isEditing ? (
             <>
               <ReactQuill
@@ -230,22 +271,59 @@ export function ArticleModal({ mode, article, onClose, onSave, categories }: Art
               </div>
             ))}
           </div>
-        </CardContent>
-        <CardFooter>
-          {isEditing ? (
-            <>
-              <Button onClick={handleSave} className="mr-2" disabled={!isFormValid}>
-                <Save className="h-4 w-4 mr-2" /> Save
-              </Button>
-              <Button onClick={handleCancel} variant="outline">
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button onClick={handleEdit}>Edit</Button>
+          {!isEditing && article && (
+            <div className="mt-6 border-t pt-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Creation Info */}
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <CalendarDays className="h-4 w-4" />
+                  <div>
+                    <span className="font-medium">Created by:</span>{' '}
+                    {article.createdBy}
+                    <br />
+                    <span className="text-gray-500">
+                      {article.createdAt.toLocaleDateString()}{' '}
+                      {article.createdAt.toLocaleTimeString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Last Modified Info */}
+                {article.lastModified && (
+                  <div className="flex items-center space-x-2 text-sm text-gray-600">
+                    <Clock className="h-4 w-4" />
+                    <div>
+                      <span className="font-medium">Last modified by:</span>{' '}
+                      {article.lastModifiedBy}
+                      <br />
+                      <span className="text-gray-500">
+                        <TimeAgo date={article.lastModified} />
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Amendment History */}
+              <AmendmentHistory amendments={article.amendments} />
+            </div>
           )}
-        </CardFooter>
-      </Card>
+          <div className="mt-6 flex justify-end space-x-2">
+            {isEditing ? (
+              <>
+                <Button onClick={handleSave} className="mr-2" disabled={!isFormValid}>
+                  <Save className="h-4 w-4 mr-2" /> Save
+                </Button>
+                <Button onClick={handleCancel} variant="outline">
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button onClick={handleEdit}>Edit</Button>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
